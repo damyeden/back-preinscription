@@ -1,46 +1,76 @@
-# This workflow will build, test, and deploy a .NET project to a VPS
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
-
 name: .NET CI/CD
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
-  build-test-deploy:
+  build-test:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Récupérer le code source
+      # 1. Récupérer le code source
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2️⃣ Installer .NET SDK
+      # 2. Installer .NET SDK
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'  # adapte selon ta version .NET
+          dotnet-version: "8.0.x"
 
-      # 3️⃣ Restaurer les dépendances
+      # 3. Restaurer les dépendances
       - name: Restore dependencies
         run: dotnet restore
 
-      # 4️⃣ Build du projet
+      # 4. Build
       - name: Build
         run: dotnet build --configuration Release --no-restore
 
-      # 5️⃣ Tests unitaires
+      # 5. Tests
       - name: Run tests
         run: dotnet test --no-build --verbosity normal
 
-      # 6️⃣ Publier le projet dans un dossier temporaire
+
+  deploy:
+    needs: build-test
+
+    # Déploiement UNIQUEMENT après un push sur main
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      # 6. Récupérer le code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 7. Installer .NET
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # 8. Publier
       - name: Publish project
         run: dotnet publish back-preinscription.csproj -c Release -o ./back-preinscription
-        
-      # 7️⃣ Déploiement sur le serveur VPS via SCP
+
+      # 9. Rejoindre le réseau Tailscale
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: ${{ secrets.VPS_HOST }}
+
+      # 10. Copier les fichiers vers le VPS
       - name: Deploy via SCP
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -51,8 +81,8 @@ jobs:
           source: "./back-preinscription/*"
           target: "/home/sciadm/"
           debug: true
-          
-      # 8️⃣ Redémarrer le service sur le VPS
+
+      # 11. Redémarrer le service
       - name: Restart service on VPS
         uses: appleboy/ssh-action@v0.1.10
         with:
@@ -61,7 +91,6 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
           script: |
-            echo "🚀 Restarting systemd service..."
+            echo "Restarting systemd service..."
             sudo systemctl restart backpreinscription.service
             sudo systemctl status backpreinscription.service --no-pager
-      
