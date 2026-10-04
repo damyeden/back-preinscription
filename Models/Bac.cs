@@ -9,7 +9,7 @@ public partial class Bac
 
     public int AnneeBacc { get; set; }
 
-    public int NumBacc { get; set; }
+    public string NumBacc { get; set; } = null!;
 
     public string? DocBac { get; set; }
 

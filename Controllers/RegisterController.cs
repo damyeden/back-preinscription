@@ -175,6 +175,8 @@ namespace backPreinscription.Controllers
                 );
             }
 
+            var numBaccValue = numBaccStr.Trim();
+
             // Vérifier annee de bacc
             var anneeBacc = candidateInfo.GraduationYear;
             if (anneeBacc <= 0)
@@ -189,7 +191,7 @@ namespace backPreinscription.Controllers
 
             // Vérifier existence du bac et préinscription existante (même logique)
             var Bacc = _context.Bacs
-                .Where(b => b.NumBacc == numBacc && b.AnneeBacc == anneeBacc)
+                .Where(b => b.NumBacc == numBaccValue && b.AnneeBacc == anneeBacc)
                 .Select(b => new { b.IdBac })
                 .FirstOrDefault();
 
@@ -208,13 +210,13 @@ namespace backPreinscription.Controllers
             }
 
             // Si le Bac n'existe pas, on le crée (comme avant)
-            var findBacc = _context.Bacs.FirstOrDefault(b => b.NumBacc == numBacc && b.AnneeBacc == anneeBacc);
+            var findBacc = _context.Bacs.FirstOrDefault(b => b.NumBacc == numBaccValue && b.AnneeBacc == anneeBacc);
             if (findBacc == null)
             {
                 var bacc = new Bac
                 {
                     AnneeBacc = anneeBacc,
-                    NumBacc = numBacc
+                    NumBacc = numBaccValue
                 };
                 _context.Bacs.Add(bacc);
                 await _context.SaveChangesAsync();
@@ -265,7 +267,7 @@ namespace backPreinscription.Controllers
                 Agence = bankInfo.AgenceRef,
                 DatePaiement = datePaiement,
                 IdPortail = selectedProgram.IdPortail,
-                IdBac = _context.Bacs.FirstOrDefault(b => b.NumBacc == numBacc && b.AnneeBacc == anneeBacc)?.IdBac,
+                IdBac = _context.Bacs.FirstOrDefault(b => b.NumBacc == numBaccValue && b.AnneeBacc == anneeBacc)?.IdBac,
                 ModeInscription = mode
             };
 
