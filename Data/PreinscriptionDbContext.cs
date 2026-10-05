@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using backPreinscription.Models;
@@ -905,6 +905,7 @@ public partial class PreinscriptionDbContext : DbContext
                 .HasDefaultValue(false)
                 .HasColumnName("est_valide");
             entity.Property(e => e.IdBac).HasColumnName("id_bac");
+            entity.Property(e => e.IdAnnee).HasColumnName("id_annee");
             entity.Property(e => e.ModeInscription).HasColumnName("mode_preinscription").HasColumnType("type_mode_inscription");
             entity.Property(e => e.IdPortail).HasColumnName("id_portail");
             entity.Property(e => e.RefBancaire)

@@ -26,9 +26,10 @@ public class PersonalInfo
 
 public class BankInfo
 {
+    // Seule la référence du reçu bancaire est demandée au candidat.
+    // Les champs AgenceRef et DateRef ont été retirés : ils n'étaient pas
+    // exploitables pour le traitement du dossier.
     public required string Reference { get; set; }
-    public required string DateRef { get; set; }
-    public required string AgenceRef { get; set; }
 }
 
 public class ApplicationData

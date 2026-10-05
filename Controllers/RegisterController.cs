@@ -12,12 +12,25 @@ namespace backPreinscription.Controllers
     public class RegisterController : ControllerBase
     {
         private readonly PreinscriptionDbContext _context;
-        private readonly IEmailService _emailService;
 
-        public RegisterController(PreinscriptionDbContext context, IEmailService emailService)
+        public RegisterController(PreinscriptionDbContext context)
         {
             _context = context;
-            _emailService = emailService;
+        }
+
+        /// <summary>
+        /// Identifiant de l'année universitaire en cours
+        /// (annees_universitaires.est_active). Toute la logique annuelle
+        /// (rattachement des dossiers, unicité par portail) s'appuie dessus :
+        /// changer d'année universitaire se fait donc en base, sans redéploiement.
+        /// </summary>
+        private int GetCurrentAnneeId()
+        {
+            return _context.Database
+                .SqlQueryRaw<int>(
+                    "SELECT id_annee AS \"Value\" FROM annees_universitaires WHERE est_active = true ORDER BY id_annee DESC LIMIT 1")
+                .AsEnumerable()
+                .FirstOrDefault();
         }
 
         private bool IsPreinscriptionClosed()
@@ -25,13 +38,6 @@ namespace backPreinscription.Controllers
             var currentYear = DateTime.Now.Year;
             var deadline = new DateTime(currentYear, 12, 15, 23, 59, 59);
             return DateTime.Now > deadline;
-        }
-
-        [HttpGet("test-email")]
-        public async Task<ActionResult> TestEmail()
-        {
-            await _emailService.EnvoyerEmailAsync("654.faneva@gmail.com", "Test Email", "Ceci est un test");
-            return Ok("Email envoyé !");
         }
 
         [HttpGet("portail/getallportails")]
@@ -45,6 +51,36 @@ namespace backPreinscription.Controllers
                 NomPortail = p.NomPortail
             }));
             return Ok(dataReturn);
+        }
+
+        /// <summary>
+        /// Portails déjà préinscrits par un candidat pour l'année universitaire
+        /// en cours : le front s'en sert pour les marquer et les désactiver.
+        /// </summary>
+        [HttpGet("{numBacc}/{anneeBacc}/portails-inscrits")]
+        public IActionResult GetPortailsInscrits(string numBacc, int anneeBacc)
+        {
+            var anneeId = GetCurrentAnneeId();
+            if (anneeId == 0) return Ok(Array.Empty<object>());
+
+            var idBac = _context.Bacs
+                .Where(b => b.NumBacc == numBacc && b.AnneeBacc == anneeBacc)
+                .Select(b => (int?)b.IdBac)
+                .FirstOrDefault();
+
+            if (idBac == null) return Ok(Array.Empty<object>());
+
+            var inscrits = _context.Preinscriptions
+                .Where(p => p.IdBac == idBac && p.IdAnnee == anneeId && p.IdPortail != null)
+                .Select(p => new
+                {
+                    p.IdPortail,
+                    p.IdPreinscription,
+                    p.DatePreinscription
+                })
+                .ToList();
+
+            return Ok(inscrits);
         }
 
         [HttpGet("portail/{series}/{type}")]
@@ -195,15 +231,22 @@ namespace backPreinscription.Controllers
                 .Select(b => new { b.IdBac })
                 .FirstOrDefault();
 
+            var anneeId = GetCurrentAnneeId();
+
+            // Un même candidat ne peut s'inscrire qu'une fois par portail et par
+            // année universitaire (il peut donc candidater de nouveau l'année suivante).
             var portailExist = new Preinscription();
             if (Bacc != null)
-                portailExist = _context.Preinscriptions.FirstOrDefault(p => p.IdPortail == selectedProgram.IdPortail && p.IdBac == Bacc.IdBac);
+                portailExist = _context.Preinscriptions.FirstOrDefault(p =>
+                    p.IdPortail == selectedProgram.IdPortail
+                    && p.IdBac == Bacc.IdBac
+                    && p.IdAnnee == anneeId);
 
             if (portailExist != null && portailExist.IdBac != null && portailExist.IdPortail != null)
             {
                 return Problem(
                     title: "Préinscription existante",
-                    detail: "Vous avez déjà une préinscription pour ce portail.",
+                    detail: "Vous avez déjà une préinscription pour ce portail cette année universitaire.",
                     statusCode: StatusCodes.Status400BadRequest,
                     type: "https://example.com/problems/duplicate-preinscription"
                 );
@@ -222,26 +265,12 @@ namespace backPreinscription.Controllers
                 await _context.SaveChangesAsync();
             }
 
-            // Parse DatePaiement de façon sûre
-            if (string.IsNullOrWhiteSpace(bankInfo.DateRef))
-            {
-                return Problem(
-                    title: "Date de paiement requise",
-                    detail: "bankInfo.dateRef est requis.",
-                    statusCode: StatusCodes.Status400BadRequest,
-                    type: "https://example.com/problems/invalid-field"
-                );
-            }
-
-            if (!DateTime.TryParse(bankInfo.DateRef, out var datePaiement))
-            {
-                return Problem(
-                    title: "Format de date invalide",
-                    detail: $"bankInfo.dateRef doit être une date valide. Valeur reçue: '{bankInfo.DateRef}'.",
-                    statusCode: StatusCodes.Status400BadRequest,
-                    type: "https://example.com/problems/invalid-field-format"
-                );
-            }
+            // La date de paiement n'est plus saisie par le candidat : on horodate
+            // la réception du dossier. L'agence n'est plus collectée non plus.
+            // Important : la colonne est un "timestamp without time zone" et Npgsql
+            // refuse un DateTime de Kind=Utc dessus. On utilise donc l'heure locale
+            // (Kind=Local), comme le reste du contrôleur.
+            var datePaiement = DateTime.Now;
 
             // Conversion ModeInscription (conserver la logique de mapping)
             ModeInscriptionEnum mode;
@@ -264,30 +293,16 @@ namespace backPreinscription.Controllers
                 Email = data.PersonalInfo.Email,
                 Tel = data.PersonalInfo.Telephone,
                 RefBancaire = bankInfo.Reference,
-                Agence = bankInfo.AgenceRef,
+                Agence = string.Empty,
                 DatePaiement = datePaiement,
                 IdPortail = selectedProgram.IdPortail,
                 IdBac = _context.Bacs.FirstOrDefault(b => b.NumBacc == numBaccValue && b.AnneeBacc == anneeBacc)?.IdBac,
+                IdAnnee = anneeId == 0 ? null : anneeId,
                 ModeInscription = mode
             };
 
             _context.Preinscriptions.Add(preinscription);
             await _context.SaveChangesAsync();
-
-            // Envoi d'email — on continue à faire comme avant, on attrape l'exception si besoin
-            try
-            {
-                await _emailService.EnvoyerEmailAsync(
-                    preinscription.Email,
-                    "Confirmation Préinscription",
-                    $"Bonjour {preinscription.Email}, votre préinscription est enregistrée !"
-                );
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine("Erreur envoi email: " + ex.Message);
-                // Ne pas échouer la création pour un échec d'email (même comportement conservé)
-            }
 
             var dataReturn = new preinscriptionReturn
             {

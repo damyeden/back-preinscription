@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace backPreinscription.Models;
@@ -32,6 +32,9 @@ public partial class Preinscription
     public int? AdminValidation { get; set; }
 
     public int? IdBac { get; set; }
+
+    /// <summary>Année universitaire du dossier (annees_universitaires.id_annee).</summary>
+    public int? IdAnnee { get; set; }
 
     public ModeInscriptionEnum? ModeInscription { get; set; }
 
