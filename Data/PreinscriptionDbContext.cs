@@ -104,6 +104,8 @@ public partial class PreinscriptionDbContext : DbContext
 
     public virtual DbSet<Province> Provinces { get; set; }
 
+    public virtual DbSet<ReferenceBancaire> ReferenceBancaires { get; set; }
+
     public virtual DbSet<RespoLabo> RespoLabos { get; set; }
 
     public virtual DbSet<Role> Roles { get; set; }
@@ -987,6 +989,32 @@ public partial class PreinscriptionDbContext : DbContext
                 .HasForeignKey(d => d.Responsable)
                 .OnDelete(DeleteBehavior.SetNull)
                 .HasConstraintName("fk_respo_labo_personne");
+        });
+
+        modelBuilder.Entity<ReferenceBancaire>(entity =>
+        {
+            entity.HasKey(e => e.IdRb).HasName("reference_bancaire_pkey");
+
+            entity.ToTable("reference_bancaire");
+
+            entity.HasIndex(e => e.IdInscription, "idx_ref_bancaire_id_inscription");
+
+            entity.HasIndex(e => e.IdPreinscription, "idx_ref_bancaire_id_preinscription");
+
+            entity.HasIndex(e => e.Reference, "unq_reference_bancaire_reference").IsUnique();
+
+            entity.Property(e => e.IdRb)
+                .HasDefaultValueSql("nextval('reference_bancaire_id_rb_seq'::regclass)")
+                .HasColumnName("id_rb");
+            entity.Property(e => e.IdInscription).HasColumnName("id_inscription");
+            entity.Property(e => e.IdPreinscription).HasColumnName("id_preinscription");
+            entity.Property(e => e.Reference)
+                .HasMaxLength(20)
+                .HasColumnName("reference");
+            entity.Property(e => e.DateInsertion)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnType("timestamp without time zone")
+                .HasColumnName("date_insertion");
         });
 
         modelBuilder.Entity<Role>(entity =>

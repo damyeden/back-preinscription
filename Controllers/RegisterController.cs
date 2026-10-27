@@ -11,12 +11,28 @@ namespace backPreinscription.Controllers
     [Route("api/[controller]")]
     public class RegisterController : ControllerBase
     {
+        /// <summary>
+        /// Longueur maximale d'une référence (colonne reference_bancaire.reference
+        /// est un varchar(20) ; on refuse au-delà plutôt que de laisser la base
+        /// tronquer ou rejeter en erreur 500).
+        /// </summary>
+        private const int ReferenceMaxLength = 20;
+
         private readonly PreinscriptionDbContext _context;
 
         public RegisterController(PreinscriptionDbContext context)
         {
             _context = context;
         }
+
+        /// <summary>
+        /// Forme canonique d'une référence : sans espaces autour, en majuscules.
+        /// Un candidat qui saisit « yma7730/cot  » désigne le même reçu que
+        /// « YMA7730/COT » : sans cette normalisation, le contrôle de doublon
+        /// laisserait passer deux fois la même preuve de paiement.
+        /// </summary>
+        private static string NormalizeReference(string? reference)
+            => (reference ?? string.Empty).Trim().ToUpperInvariant();
 
         /// <summary>
         /// Identifiant de l'année universitaire en cours
@@ -158,20 +174,6 @@ namespace backPreinscription.Controllers
                 );
             }
 
-            // Vérification existence référence bancaire (comme avant)
-            var refExisting = _context.Preinscriptions
-                .FirstOrDefault(p => p.RefBancaire == data.BankInfo.Reference);
-            if (refExisting != null)
-            {
-                // On garde le même code HTTP (400) mais on renvoie un ProblemDetails standard
-                return Problem(
-                    title: "Référence bancaire déjà utilisée",
-                    detail: "La référence bancaire fournie est déjà utilisée pour une autre préinscription.",
-                    statusCode: StatusCodes.Status400BadRequest,
-                    type: "https://example.com/problems/duplicate-bank-reference"
-                );
-            }
-
             // Récupérations initiales (conserver la logique)
             var candidateInfo = data.CandidateInfo;
             var bankInfo = data.BankInfo;
@@ -185,6 +187,58 @@ namespace backPreinscription.Controllers
                     detail: "candidateInfo, bankInfo, selectedProgram et personalInfo sont requis.",
                     statusCode: StatusCodes.Status400BadRequest,
                     type: "https://example.com/problems/missing-fields"
+                );
+            }
+
+            // Références bancaires : la principale d'abord, puis les reçus
+            // complémentaires. On applique la même normalisation partout
+            // (contrôle de doublon comme écriture), sinon une différence de
+            // casse ou une espace de saisie laisserait passer un reçu en double.
+            var references = new List<string>();
+            foreach (var candidate in (bankInfo.References ?? new List<string>())
+                         .Prepend(bankInfo.Reference))
+            {
+                var normalized = NormalizeReference(candidate);
+                if (normalized.Length == 0 || references.Contains(normalized))
+                    continue;
+                references.Add(normalized);
+            }
+
+            if (references.Count == 0)
+            {
+                return Problem(
+                    title: "Référence bancaire manquante",
+                    detail: "Au moins une référence de reçu est requise.",
+                    statusCode: StatusCodes.Status400BadRequest,
+                    type: "https://example.com/problems/missing-bank-reference"
+                );
+            }
+
+            var referenceTropLongue = references.FirstOrDefault(r => r.Length > ReferenceMaxLength);
+            if (referenceTropLongue != null)
+            {
+                return Problem(
+                    title: "Référence bancaire invalide",
+                    detail: $"La référence « {referenceTropLongue} » dépasse {ReferenceMaxLength} caractères.",
+                    statusCode: StatusCodes.Status400BadRequest,
+                    type: "https://example.com/problems/invalid-bank-reference"
+                );
+            }
+
+            // Un reçu ne peut servir qu'à un seul dossier. On compare sur la
+            // valeur nettoyée : les anciennes lignes peuvent avoir des espaces.
+            var referenceExistante = await _context.ReferenceBancaires
+                .Where(r => references.Contains(r.Reference.Trim().ToUpper()))
+                .Select(r => r.Reference)
+                .FirstOrDefaultAsync();
+
+            if (referenceExistante != null)
+            {
+                return Problem(
+                    title: "Référence bancaire déjà utilisée",
+                    detail: $"La référence « {referenceExistante.Trim()} » est déjà utilisée pour un autre dossier.",
+                    statusCode: StatusCodes.Status400BadRequest,
+                    type: "https://example.com/problems/duplicate-bank-reference"
                 );
             }
 
@@ -292,7 +346,7 @@ namespace backPreinscription.Controllers
             {
                 Email = data.PersonalInfo.Email,
                 Tel = data.PersonalInfo.Telephone,
-                RefBancaire = bankInfo.Reference,
+                RefBancaire = references[0],
                 Agence = string.Empty,
                 DatePaiement = datePaiement,
                 IdPortail = selectedProgram.IdPortail,
@@ -302,6 +356,22 @@ namespace backPreinscription.Controllers
             };
 
             _context.Preinscriptions.Add(preinscription);
+            await _context.SaveChangesAsync();
+
+            // Toutes les références sont rattachées au dossier qui vient d'être
+            // créé : la principale en tête, puis les reçus complémentaires.
+            // L'index unique sur reference protège en dernier recours si deux
+            // candidats envoient le même reçu au même instant.
+            var dateInsertion = DateTime.Now;
+            foreach (var reference in references)
+            {
+                _context.ReferenceBancaires.Add(new ReferenceBancaire
+                {
+                    IdPreinscription = preinscription.IdPreinscription,
+                    Reference = reference,
+                    DateInsertion = dateInsertion
+                });
+            }
             await _context.SaveChangesAsync();
 
             var dataReturn = new preinscriptionReturn

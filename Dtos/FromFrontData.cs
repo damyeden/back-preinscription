@@ -26,10 +26,15 @@ public class PersonalInfo
 
 public class BankInfo
 {
-    // Seule la référence du reçu bancaire est demandée au candidat.
+    // Référence principale : recopiée dans preinscription.ref_bancaire, que
+    // lisent les traitements historiques. Elle reste obligatoire.
     // Les champs AgenceRef et DateRef ont été retirés : ils n'étaient pas
     // exploitables pour le traitement du dossier.
     public required string Reference { get; set; }
+
+    // Références complémentaires, une par versement supplémentaire. Le
+    // candidat qui règle en plusieurs fois possède un reçu par paiement.
+    public List<string>? References { get; set; }
 }
 
 public class ApplicationData
